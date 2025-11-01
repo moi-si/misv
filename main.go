@@ -17,17 +17,17 @@ import (
 var (
 	bindAddr     = flag.String("bind", "", "Bind address (required)")
 	originServer = flag.String("origin", "", "Origin server domain (required)")
-	rootDir      = flag.String("root", "", "Server root directory (optional)")
-	socks5Addr   = flag.String("socks5", "", "SOCKS5 proxy address (optional)")
-	ua           = flag.String("ua", "", "Custom User-Agent header (optional)")
-	xff          = flag.String("xff", "", "Custom X-Forwarded-For header (optional)")
+	rootDir      = flag.String("root", "", "Server root directory (defaults to `./<origin>`)")
+	socks5Addr   = flag.String("socks5", "", "SOCKS5 proxy address")
+	ua           = flag.String("ua", "", "Custom User-Agent header")
+	xff          = flag.String("xff", "", "Custom X-Forwarded-For header")
 	xffEnabled   bool
 	httpClient   *http.Client
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, `moi-si/misv - Simple Proxying Static File Server
+		fmt.Fprint(os.Stderr, `moi-si/misv v0.1.0 - A simple proxying static file server
 
 Usage:
 `)
