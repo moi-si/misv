@@ -27,7 +27,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, `moi-si/misv v0.1.0 - A simple proxying static file server
+		fmt.Fprint(os.Stderr, `moi-si/misv v0.1.1 - A simple proxying static file server
 
 Usage:
 `)
@@ -94,9 +94,9 @@ Usage:
 	}
 }
 
-func fetch(w http.ResponseWriter, filePath, urlPath string) bool {
+func fetch(w http.ResponseWriter, r *http.Request, urlPath string) (shouldReturn bool) {
 	originURL := "https://" + *originServer + urlPath
-	log.Println(filePath, "not found, fetching from origin URL...")
+	log.Println(urlPath, "not found, fetching from origin URL...")
 	req, err := http.NewRequest("GET", originURL, nil)
 	if err != nil {
 		log.Println("Failed to create new request:", err)
@@ -113,26 +113,32 @@ func fetch(w http.ResponseWriter, filePath, urlPath string) bool {
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Println("Failed to fetch file:", err)
+		log.Printf("Failed to fetch %s: %s", urlPath, err)
 		http.Error(w, fmt.Sprintln("Failed to fetch file:", err), http.StatusBadGateway)
 		return true
 	}
 	defer resp.Body.Close()
+	newPath := resp.Request.URL.Path
+	shouldRedirect := newPath != urlPath && newPath != urlPath+"/"
+	if strings.HasSuffix(newPath, "/") {
+		newPath += "index.html"
+	}
 	if resp.StatusCode != http.StatusOK {
-		log.Println("Origin server response:", resp.Status)
+		log.Printf("Origin server response for %s: %s", urlPath, resp.Status)
 		http.Error(w, fmt.Sprintln("Origin server response:", resp.Status), http.StatusBadGateway)
 		return true
 	}
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-		log.Printf("Failed to create %s: %s", dir, err)
-		http.Error(w, fmt.Sprintf("Failed to create %s: %s", dir, err), 500)
+	filePath := filepath.Join(*rootDir, newPath)
+	urlDir := filepath.Dir(urlPath)
+	if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+		log.Printf("Failed to create %s: %s", urlDir, err)
+		http.Error(w, fmt.Sprintf("Failed to create %s: %s", urlDir, err), 500)
 		return true
 	}
 	outFile, err := os.Create(filePath)
 	if err != nil {
-		log.Printf("Failed to create %s: %s", filePath, err)
-		http.Error(w, fmt.Sprintf("Failed to create %s: %s", dir, err), 500)
+		log.Printf("Failed to create %s: %s", urlDir, err)
+		http.Error(w, fmt.Sprintf("Failed to create %s: %s", urlDir, err), 500)
 		return true
 	}
 	defer func() {
@@ -142,10 +148,13 @@ func fetch(w http.ResponseWriter, filePath, urlPath string) bool {
 	}()
 	if _, err = io.Copy(outFile, resp.Body); err != nil {
 		log.Printf("Failed to write %s: %s", filePath, err)
-		http.Error(w, fmt.Sprintf("Failed to write %s: %s", filePath, err), 500)
+		http.Error(w, fmt.Sprintf("Failed to write file: %s", err), 500)
 		return true
 	}
-	return false
+	if shouldRedirect {
+		http.Redirect(w, r, newPath, http.StatusFound)
+	}
+	return
 }
 
 func handle(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +163,7 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	urlPath := path.Clean(r.URL.Path)
-	if !strings.HasPrefix(urlPath, "/") {
+	if !strings.HasPrefix(urlPath, "/") || strings.Contains(urlPath, "/**") || strings.Contains(urlPath, "/*") {
 		log.Println("Invalid path: ", urlPath)
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
@@ -162,7 +171,7 @@ func handle(w http.ResponseWriter, r *http.Request) {
 	filePath := filepath.Join(*rootDir, urlPath)
 	info, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
-		if fetch(w, filePath, urlPath) {
+		if fetch(w, r, urlPath) {
 			return
 		}
 	} else if err != nil {
@@ -170,18 +179,18 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintln("cannot open file: ", err), 500)
 		return
 	} else if info.IsDir() {
-		filePath = filepath.Join(*rootDir, "index.html")
-		if info, err = os.Stat(filePath); os.IsNotExist(err) {
-			if fetch(w, filePath, urlPath) {
+		indexPath := filepath.Join(filePath, "index.html")
+		if info, err = os.Stat(indexPath); os.IsNotExist(err) {
+			if fetch(w, r, urlPath) {
 				return
 			}
 		} else if err != nil {
-			log.Printf("Accessing %s: %s", filePath, err)
+			log.Printf("Accessing %s: %s", indexPath, err)
 			http.Error(w, fmt.Sprintln("cannot open file: ", err), 500)
 			return
 		} else if info.IsDir() {
-			log.Println(filePath, "is a directory")
-			http.Error(w, fmt.Sprintln(filePath, "is a directory"), 500)
+			log.Println(indexPath, "is a directory")
+			http.Error(w, fmt.Sprintln("index.html is a directory"), 500)
 			return
 		}
 	}
